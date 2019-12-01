@@ -1,4 +1,4 @@
-package com.codependent.storyteller;
+package com.ps.microservice;
 
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
