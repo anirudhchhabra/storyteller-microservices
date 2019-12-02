@@ -19,8 +19,6 @@ eureka:
   client:
     serviceUrl:
       defaultZone: http://localhost:8761/eureka/
-    healthcheck:
-      enabled: true
 #   registerWithEureka: false
 
 hystrix:

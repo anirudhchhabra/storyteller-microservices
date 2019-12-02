@@ -1,7 +1,7 @@
 package com.ps.microservice;
 
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
 
 @EnableEurekaServer
@@ -9,6 +9,7 @@ import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
 public class ArchimedesApplication {
 	
     public static void main(String[] args) {
-    	new SpringApplicationBuilder(ArchimedesApplication.class).web(true).run(args);
+//    	new SpringApplicationBuilder(ArchimedesApplication.class).web(true).run(args);
+    	SpringApplication.run(ArchimedesApplication.class, args);
     }
 }
