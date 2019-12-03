@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
@@ -57,6 +58,6 @@ public class RandomImageMsApplication {
     }
 	
     public static void main(String[] args) {
-    	new SpringApplicationBuilder(RandomImageMsApplication.class).web(true).run(args);
+    	SpringApplication.run(RandomImageMsApplication.class, args);
     }
 }
