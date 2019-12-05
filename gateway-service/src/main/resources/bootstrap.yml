@@ -31,7 +31,7 @@ zuul:
   routes:
     stories-microservice:
       path: /api/stories/**
-      stripPrefix: false    
+#      stripPrefix: false  
 
 
 logging:

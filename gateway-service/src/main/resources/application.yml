@@ -1,17 +1,17 @@
-hystrix:
-  command:
-    default:
-      execution:
-        isolation:
-          strategy: THREAD
-          thread:
-            timeoutInMilliseconds: 300000
-        timeout:
-          enabled: false
-            
-ribbon:
-  ConnectTimeout: 5000
-  ReadTimeout: 120000
+#hystrix:
+#  command:
+#    default:
+#      execution:
+#        isolation:
+#          strategy: THREAD
+#          thread:
+#            timeoutInMilliseconds: 300000
+#        timeout:
+#          enabled: false
+#            
+#ribbon:
+#  ConnectTimeout: 5000
+#  ReadTimeout: 120000
   
 server:
   port: 8080
