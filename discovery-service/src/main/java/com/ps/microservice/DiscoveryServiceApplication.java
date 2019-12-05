@@ -6,10 +6,10 @@ import org.springframework.cloud.netflix.eureka.server.EnableEurekaServer;
 
 @EnableEurekaServer
 @SpringBootApplication
-public class ArchimedesApplication {
+public class DiscoveryServiceApplication {
 	
     public static void main(String[] args) {
-//    	new SpringApplicationBuilder(ArchimedesApplication.class).web(true).run(args);
-    	SpringApplication.run(ArchimedesApplication.class, args);
+//    	new SpringApplicationBuilder(DiscoveryServiceApplication.class).web(true).run(args);
+    	SpringApplication.run(DiscoveryServiceApplication.class, args);
     }
 }

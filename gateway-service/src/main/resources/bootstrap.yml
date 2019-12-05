@@ -1,6 +1,6 @@
 spring:
   application:
-    name: stories-microservice
+    name: gateway-service
 #  cloud:
 #    config:
 #      discovery:
@@ -13,14 +13,28 @@ spring:
 #        multiplier: 1.5
         
 server:
-  port: 9988
+  port: 8080
+  servlet:
+    context-path: /gateway
 
 eureka:
   client:
     serviceUrl:
       defaultZone: http://localhost:8761/eureka/
-  
+    healthcheck:
+      enabled: true
+#   registerWithEureka: false
+
+zuul:
+#  prefix: /api
+  ignoredServices: '*'
+  routes:
+    stories-microservice:
+      path: /api/stories/**
+      stripPrefix: false    
+
+
 logging:
-#   file: /var/logs/stories-ms.log
   level:
     org.springframework.web: 'DEBUG'
+    com.netflix: 'DEBUG'

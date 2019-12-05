@@ -32,15 +32,15 @@ public class RandomImageMsApplication {
 
 	private Logger logger = LoggerFactory.getLogger(getClass());
 	
-	@Value("${images-ms-message}")
-	private String message;
+//	@Value("${images-ms-message}")
+//	private String message;
 	
 	@Autowired
 	private ImageService imageService;
 	
 	@RequestMapping(value="/images", params={"random=true", "fields=url"})
     public Map<String, String> getRandomImageUrl(HttpServletRequest request) {
-		logger.info("[{}] getRandomImageUrl()", message);
+		logger.info("[{}] getRandomImageUrl()");
 		String scheme = request.getScheme();
 		String server = request.getServerName();
 		int port = request.getServerPort();

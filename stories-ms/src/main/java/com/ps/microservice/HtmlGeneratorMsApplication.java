@@ -27,15 +27,15 @@ public class HtmlGeneratorMsApplication {
 
 	private Logger logger = LoggerFactory.getLogger(getClass());
 	
-	@Value("${stories-ms-message}")
-	private String message;
+//	@Value("${stories-ms-message}")
+//	private String message;
 	
 	@Autowired
 	private StoryService storyService;
 	
 	@RequestMapping(value="/stories", params="random=true")
 	public String generateHtml(HttpServletResponse response) throws RestClientException, URISyntaxException{
-		logger.info("[{}] generateHtml()", message);
+		logger.info("[{}] generateHtml()");
 		Map<String, String> randomImage = storyService.getRandomImage();
 		
 		String html = "<html><body>"+storyService.getRandomStory()+"</body></html>";

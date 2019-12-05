@@ -1,0 +1,36 @@
+hystrix:
+  command:
+    default:
+      execution:
+        isolation:
+          strategy: THREAD
+          thread:
+            timeoutInMilliseconds: 300000
+        timeout:
+          enabled: false
+            
+ribbon:
+  ConnectTimeout: 5000
+  ReadTimeout: 120000
+  
+server:
+  port: 8080
+  servlet:
+    context-path: /gateway
+
+
+#hystrix:
+#  command:
+#    stories-microservice:
+#      execution:
+#        isolation:
+#          strategy: THREAD
+#          thread:
+#            timeoutInMilliseconds: 10000
+
+#stories-microservice:
+#  ribbon:
+#    ConnectTimeout: 250
+#    OkToRetryOnAllOperations: true
+#    MaxAutoRetriesNextServer: 2
+#    MaxAutoRetries: 0
