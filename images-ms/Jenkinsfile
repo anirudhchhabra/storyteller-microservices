@@ -1,0 +1,357 @@
+#!/usr/bin/env groovy
+pipeline {
+	agent any
+
+	tools {
+		maven 'Maven'
+	}
+
+	options {
+		buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '5'))
+	}
+
+	environment {
+		BUILD_NUMBER = "${env.BUILD_NUMBER}"
+		TIMESTAMP = new java.text.SimpleDateFormat('yyyyMMddHHmmss').format(new Date())
+		NEXUS_VERSION = "nexus3"
+		NEXUS_REPOSITORY = "maven-releases"
+	}
+
+	// ###############
+	// PIPELINE STAGES
+	// ###############
+
+	stages {
+
+		// #############
+		// CONFIGURATION
+		// #############
+
+		stage('Configuration') {
+			steps {
+				echo "Setting up environment vars..."
+				script {
+					GIT_COMMIT_SHORT = sh(
+					 script: "printf \$(git rev-parse --short ${GIT_COMMIT})",
+					 returnStdout: true
+					)
+
+					// this is the Spring ENV, not the OpenShift ENV
+					env.ENV = "prod"
+
+					// Configurations from config.json file
+					env.BUILD_CONFIG = "./config/jenkins/config.json"
+					echo "Build Config file : ${BUILD_CONFIG}"
+					def config = readJSON file: "${BUILD_CONFIG}"
+					env.BUILD_NAME = config.project_name
+					env.OC_PROJECT_DEV = config.oc_project_dev
+					env.OC_PROJECT_QA = config.oc_project_qa
+					env.OC_PROJECT_PROD = config.oc_project_prod
+					env.SERVICE_NAME = config.app_url_subdomain
+					env.QA_DEPLOY = config.qa_deploy
+					env.SERVICE_PORT = config.service_port		
+
+					// TODO: configure automated BDD tests
+					env.API_AUTOMATION = config.api_automation_job
+					env.SECURITY_AUTOMATION = config.security_automation_job
+					env.PERFORMANCE_AUTOMATION = config.performance_automation_job
+
+					// Global Environment Variables
+					env.REPO_URL = "${BASE_REPO_URL}"
+					env.REGION_NAME = "${AWS_REGION}"
+					env.DOMAIN_NAME = "${AWS_DOMAIN_NAME}"
+
+					// Job Specific Configurations
+					env.BUILD_IMAGE_VERSION = "${BUILD_NUMBER}-${GIT_COMMIT_SHORT}"
+					env.ARTIFACT_NAME = "${BUILD_NAME}"
+					env.IMAGE_NAME =  "${BUILD_NAME}:${BUILD_IMAGE_VERSION}"
+					env.BUILD_DIR = "target"
+					env.BUILD = "${BUILD_NAME}:${BUILD_IMAGE_VERSION}"
+
+				}
+			}
+		}
+
+		stage('Maven Build') {
+			steps {
+				script {
+					sh "mkdir -p ${BUILD_DIR}"
+					sh "mvn clean install -DskipTests -U -B -Dproject.build.directory=${BUILD_DIR}"
+					sh "cp -f ${BUILD_DIR}/*.jar ./"
+				}
+			}
+		}
+
+		// ##########
+		// UNIT TESTS
+		// ##########
+
+		stage('Unit Tests') {
+			steps {
+				sh 'mvn test'
+			}
+			post {
+				always {
+					junit "${BUILD_DIR}/surefire-reports/*.xml"
+				}
+			}
+		}
+
+		// #########
+		// SONARQUBE
+		// #########
+
+		stage('SonarQube Analysis') {
+			steps {
+			   script {
+					withSonarQubeEnv('sonarqube') {
+						sh 'mvn sonar:sonar'
+					}
+				}
+			}
+		}
+
+		// ######################
+		// SONARQUBE QUALITY GATE
+		// ######################
+
+		stage("SonarQube Quality Gate") {
+			steps {
+				script {
+					timeout(time: 5, unit: 'MINUTES') {
+						def qg = waitForQualityGate()
+						if (qg.status != 'OK') {
+							error "Pipeline aborted due to quality gate failure: ${qg.status}"
+						}
+					}
+				}
+			}
+		}
+
+		// ######
+		// DOCKER
+		// ######
+
+		stage('Docker') {
+			// only deploy master branch
+			when {
+				anyOf {
+					branch 'dev*'
+					branch 'master'
+				}
+			}
+
+			agent none
+
+			steps {
+				// Build Docker Image
+				script {
+					echo "Building Docker Image..."
+					sh "docker build -t ${REPO_URL}/${BUILD_NAME}:${BUILD_IMAGE_VERSION} --build-arg APP_ENV=${ENV} --build-arg APP_NAME=${BUILD_NAME} --build-arg DEPLOY_ARTIFACT_DIR=${BUILD_DIR} --build-arg SERVICE_PORT=${SERVICE_PORT} --build-arg ARTIFACT_NAME=${BUILD_NAME}.jar --no-cache . --rm=true"
+				}
+
+				// Check repository, or create one if one does not exist
+				retry(3) {
+					script {
+							echo "Creating Repository (if doesn't exist)"
+						try {
+							sh "eval \$(aws ecr get-login --no-include-email --region ${REGION_NAME})"
+							sh "aws ecr describe-repositories --region ${REGION_NAME} --repository-names ${BUILD_NAME} 2>&1 > /dev/null"
+						} catch(Exception e) {
+							echo "Repository does not exist. Creating ..."
+							sh  "aws ecr create-repository --region ${REGION_NAME} --repository-name ${BUILD_NAME}"
+						}
+					}
+				}
+
+				// Publish Docker Image
+				script {
+					sh "docker tag ${REPO_URL}/${BUILD_NAME}:${BUILD_IMAGE_VERSION} ${REPO_URL}/${BUILD_NAME}:latest"
+					sh "docker push ${REPO_URL}/${BUILD_NAME}:${BUILD_IMAGE_VERSION}"
+					sh "docker push ${REPO_URL}/${BUILD_NAME}:latest"
+					echo "Docker image pushed successfully. Deleting the local image."
+					sh "docker rmi ${REPO_URL}/${BUILD_NAME}"
+					echo "Local image is deleted successfully."
+				}
+			}
+		}
+
+		// ##########
+		// DEPLOYMENT
+		// ##########
+
+		stage('Deploy to DEV') {
+			// only deploy master and develop branches
+			when {
+				anyOf {
+					branch 'dev*'
+					branch 'master'
+				}
+			}
+
+			steps {
+				script {
+						sh "cp config/openshift/deployment.yml ./deployment.backup"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_REPO_URL/${REPO_URL}/g' {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_APP_ARTIFACT/${BUILD_NAME}/g' {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i  s/VAR_TAG_VERSION/`openssl rand -hex 3`/g {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_NAMESPACE_NAME/${OC_PROJECT_DEV}/g' {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_CLUSTER_NAME/${OC_CLUSTER_DEV}/g' {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_SERVICE_NAME/${SERVICE_NAME}/g' {} +"
+						sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_DOMAIN_NAME/${DOMAIN_NAME}/g' {} +"
+						openshift.withCluster(env.OC_CLUSTER_DEV) {
+							openshift.withProject(env.OC_PROJECT_DEV) {
+								withEnv(["PATH=/opt/oc/:${env.PATH}"]) {
+									openshift.apply("-f","config/openshift/deployment.yml")
+									openshift.tag("${REPO_URL}/${BUILD_NAME}:latest","${BUILD_NAME}:latest")
+									openshift.tag("${REPO_URL}/${BUILD_NAME}:latest","${BUILD_NAME}:${BUILD_IMAGE_VERSION}")
+								}
+							}
+					}
+				}
+			}
+		}
+
+		// ###################
+		// AUTOMATED API TESTS
+		// ###################
+		stage ('Automated API Tests') {
+			// only deploy master and develop branches
+			when {
+				anyOf {
+					branch 'dev*'
+					branch 'master'
+				}
+			}
+
+			steps {
+				echo 'Triggering API Automation Suite'
+				build job: "${API_AUTOMATION}/master", wait: true, propagate: true
+			}
+		}
+
+		// ###################
+		// PUBLISH TO QA
+		// ###################
+		stage ('Deploy to QA') {
+			
+			when {
+				anyOf {
+					branch 'dev*'
+					branch 'master'
+				}
+			}
+
+			steps {
+				script {
+					echo "Path is : ${PATH}"
+					echo "The artifact to be deployed on QA is : ${BUILD}"
+					echo "Replacing the build name deployment.yml"
+
+					sh "rm config/openshift/deployment.yml"
+					sh "cp deployment.backup config/openshift/deployment.yml"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_REPO_URL/${REPO_URL}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_APP_ARTIFACT/${BUILD_NAME}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i  s/VAR_TAG_VERSION/`openssl rand -hex 3`/g {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_NAMESPACE_NAME/${OC_PROJECT_QA}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_CLUSTER_NAME/${OC_CLUSTER_QA}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_SERVICE_NAME/${SERVICE_NAME}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_DOMAIN_NAME/${DOMAIN_NAME}/g' {} +"
+					openshift.withCluster(env.OC_CLUSTER_QA) {
+						openshift.withProject(env.OC_PROJECT_QA) {
+							withEnv(["PATH=/opt/oc/:${env.PATH}"]) {
+								openshift.apply("-f","config/openshift/deployment.yml")
+								openshift.tag("${REPO_URL}/${BUILD}","${BUILD}")
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// #########################
+		// SECURITY/PERFORMANCE TEST
+		// #########################
+		stage ('Automated Security/Performance Tests') {
+			// only deploy master and develop branches
+			when {
+				anyOf {
+					branch 'dev*'
+					branch 'master'
+				}
+			}
+
+			steps {
+				parallel (
+					'Security Test': {
+						echo 'Triggering ZAP Security Testing Suite'
+						build job: "${SECURITY_AUTOMATION}/master", wait: true, propagate: true
+					},
+					'Performance Test': {
+						echo 'Triggering Performance Suite'
+						build job: "${PERFORMANCE_AUTOMATION}/master", wait: true, propagate: true
+					}
+				)
+			}
+		}
+
+		// ##################
+		// DEPLOYMENT TO PROD
+		// ##################
+
+		stage('Deploy to PROD') {
+
+			when {
+				anyOf {
+					branch 'master'
+				}
+			}
+
+			steps {
+				script {
+					echo "Path is : ${PATH}"
+					echo "The artifact to be deployed on PROD is : ${BUILD}"
+					echo "Replacing the build name deployment.yml"
+
+					sh "rm config/openshift/deployment.yml"
+					sh "cp deployment.backup config/openshift/deployment.yml"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_REPO_URL/${REPO_URL}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_APP_ARTIFACT/${BUILD_NAME}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i  s/VAR_TAG_VERSION/`openssl rand -hex 3`/g {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_NAMESPACE_NAME/${OC_PROJECT_PROD}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_CLUSTER_NAME/${OC_CLUSTER_PROD}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_SERVICE_NAME/${SERVICE_NAME}/g' {} +"
+					sh "find . -type f -name deployment.yml -exec sed -i 's/VAR_DOMAIN_NAME/${DOMAIN_NAME}/g' {} +"
+					openshift.withCluster(env.OC_CLUSTER_PROD) {
+						openshift.withProject(env.OC_PROJECT_PROD) {
+							withEnv(["PATH=/opt/oc/:${env.PATH}"]) {
+								openshift.apply("-f","config/openshift/deployment.yml")
+								openshift.tag("${REPO_URL}/${BUILD}","${BUILD}")
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	post {
+		always {
+			echo 'Build finished.  Cleaning up workspace....'
+			deleteDir()
+		}
+		success {
+			echo 'Success!'
+		}
+		unstable {
+			echo 'I am unstable.  :/'
+		}
+		failure {
+			echo 'OH NO!  I am a failure.'
+		}
+		changed {
+			echo 'Something changed...'
+		}
+	}
+}
+
